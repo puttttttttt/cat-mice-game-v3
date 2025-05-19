@@ -195,18 +195,20 @@
         let squeakSynth;
         let runningSoundPlayer; 
         const MOUSE_RUNNING_SOUND_PATH = "mouse_running.mp3"; //  Ensure this path is correct for your GitHub repo
+        let audioInitialized = false; // Flag to track if initAudio has been successfully called
 
         async function initAudio() {
+            if (audioInitialized) return true; // Don't re-initialize if already done
+
             if (typeof Tone === 'undefined' || Tone === null) {
                 console.warn('Tone.js not loaded. Game will run without sound.');
                 return false;
             }
-            // Ensure AudioContext is started by a user gesture.
-            // This is typically done once. The `startGame` function, triggered by a button, will call this.
+            
             if (Tone.context.state !== 'running') {
                 try {
                     await Tone.start(); 
-                    console.log('AudioContext started');
+                    console.log('AudioContext started by user gesture.');
                 } catch (e) {
                     console.error("Error starting AudioContext:", e);
                     alert("Could not initialize audio. Game will run without sound.");
@@ -222,29 +224,24 @@
                 }).toDestination();
             }
 
-            // Initialize running sound player if it hasn't been already
+            // Initialize running sound player
             if (!runningSoundPlayer) {
                 runningSoundPlayer = new Tone.Player({
                     url: MOUSE_RUNNING_SOUND_PATH,
                     loop: true,
-                    autostart: false, // We will explicitly start it
+                    autostart: false, 
                     onload: () => {
                         console.log("Mouse running sound loaded successfully.");
-                        // MODIFICATION: If the game is already supposed to be running when the sound loads, start it.
-                        if (gameRunning) {
-                            startRunningSound();
-                        }
+                        // Sound will be started by startGame explicitly
                     },
                     onerror: (error) => {
                         console.error("Error loading mouse running sound:", error);
-                        alert(`Could not load the mouse running sound from: ${MOUSE_RUNNING_SOUND_PATH}. Please check the path and file. Running sound will be disabled.`);
+                        alert(`Could not load the mouse running sound from: ${MOUSE_RUNNING_SOUND_PATH}. Running sound will be disabled.`);
                         runningSoundPlayer = null; 
                     }
                 }).toDestination();
-            } else if (runningSoundPlayer.loaded && gameRunning) {
-                // If player exists, is loaded, and game is running (e.g. retry), start it.
-                 startRunningSound();
             }
+            audioInitialized = true; // Set flag to true after successful initialization
             return true; 
         }
 
@@ -255,24 +252,22 @@
         }
 
         function startRunningSound() {
-            // Check if player exists, is loaded, context is running, and not already started
             if (runningSoundPlayer && runningSoundPlayer.loaded && Tone.context.state === 'running' && runningSoundPlayer.state !== "started") {
                 runningSoundPlayer.start();
-                console.log("Started running sound.");
+                console.log("Started mouse running sound.");
             } else if (runningSoundPlayer && !runningSoundPlayer.loaded) {
-                console.warn("Attempted to start running sound, but it's not loaded yet. It should start on load if game is running.");
+                console.warn("Mouse running sound not loaded yet. It should start via onload if game starts before load finishes.");
             } else if (!runningSoundPlayer) {
-                 console.warn("Attempted to start running sound, but player is not initialized (possibly due to load error).");
+                 console.warn("Mouse running sound player not initialized (possibly due to load error).");
             }
         }
 
         function stopRunningSound() {
             if (runningSoundPlayer && runningSoundPlayer.loaded && runningSoundPlayer.state === "started") {
                 runningSoundPlayer.stop();
-                console.log("Stopped running sound.");
+                console.log("Stopped mouse running sound.");
             }
         }
-
 
         // --- Screen Management ---
         function showScreen(screenElement) {
@@ -345,12 +340,12 @@
 
         // --- Game Control Functions ---
         async function startGame() {
-            // Ensure audio context is running and sounds are initialized/ready.
-            const audioReady = await initAudio(); 
+            // Initialize audio context on the first user gesture (start button click)
+            // and set up sound players.
+            const audioIsReady = await initAudio(); 
 
             score = 0;
             updateScoreDisplay();
-            // Set gameRunning to true BEFORE trying to start sounds that depend on this flag
             gameRunning = true; 
             
             resizeCanvas(); 
@@ -360,16 +355,24 @@
             if (animationFrameId) cancelAnimationFrame(animationFrameId);
             gameLoop();
 
-            // MODIFICATION: Call startRunningSound here.
-            // If the sound wasn't loaded yet, the onload callback in initAudio will handle starting it.
-            // If it was already loaded (e.g., on a retry), this will start it.
-            if (audioReady) {
-                startRunningSound();
+            if (audioIsReady) {
+                // If the sound is already loaded, startRunningSound will play it.
+                // If it's not loaded yet, the onload callback in initAudio will handle starting it
+                // once it loads, because gameRunning is now true.
+                // To ensure it plays if loaded, we also check in onload of the player.
+                // For simplicity now, we rely on player being loaded or onload to trigger.
+                if (runningSoundPlayer && runningSoundPlayer.loaded) {
+                    startRunningSound();
+                } else if (runningSoundPlayer) {
+                    // If not loaded, the onload callback in initAudio will check gameRunning
+                    // and start it. We add a log here for clarity.
+                    console.log("Mouse running sound is loading... will play once ready if game is still running.");
+                }
             }
         }
 
         function stopGame() {
-            gameRunning = false; // Set to false before stopping sounds
+            gameRunning = false; 
             if (animationFrameId) {
                 cancelAnimationFrame(animationFrameId);
             }
@@ -383,15 +386,15 @@
         }
 
         // --- Event Handlers ---
-        // Make event handlers async to correctly await startGame
         startButton.addEventListener('click', async () => { 
             await startGame(); 
         });
         stopButtonOverlay.addEventListener('click', stopGame);
         retryButton.addEventListener('click', async () => { 
+            // Reset audioInitialized flag if you want to re-initialize (optional, depends on desired behavior)
+            // For now, initAudio handles not re-initializing if already done.
             await startGame();
         });
-
 
         canvas.addEventListener('click', (event) => {
             if (!gameRunning) return;
