@@ -1,0 +1,433 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
+    <title>Catch the Mouse! - Full Screen</title>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/tone/14.8.49/Tone.min.js"></script>
+    <link href="https://fonts.googleapis.com/css2?family=Press+Start+2P&display=swap" rel="stylesheet">
+    <style>
+        /* Basic Reset & Full Screen Setup */
+        html, body {
+            margin: 0;
+            padding: 0;
+            width: 100vw; /* Full viewport width */
+            height: 100vh; /* Full viewport height */
+            overflow: hidden; /* Prevent scrollbars */
+            font-family: 'Press Start 2P', cursive;
+            background-color: #3498db; /* Fallback background for areas outside screens */
+            color: #fff;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+        }
+
+        .screen-container {
+            width: 100%;
+            height: 100%;
+            display: flex;
+            flex-direction: column;
+            justify-content: center;
+            align-items: center;
+            text-align: center;
+            padding: 20px;
+            box-sizing: border-box; /* Include padding in width/height */
+        }
+
+        /* Screens (Intro, Game, Score) */
+        .screen {
+            display: none; /* Hidden by default */
+            width: 100%;
+            height: 100%;
+            position: absolute; /* Take up full space */
+            top: 0;
+            left: 0;
+            flex-direction: column;
+            justify-content: center;
+            align-items: center;
+        }
+        .screen.active {
+            display: flex; /* Use flex for centering content within the screen */
+        }
+
+        #intro-screen { background-color: #2c3e50; }
+        #score-screen { background-color: #2c3e50; }
+        /* Game screen itself is mostly the canvas */
+        #game-screen {
+            background-color: #27ae60; /* Grass green, canvas will be this color */
+        }
+
+
+        canvas {
+            display: block; /* Removes extra space below canvas */
+            background-color: #27ae60; /* Grass green */
+            width: 100%; /* CSS width */
+            height: 100%;/* CSS height */
+            cursor: crosshair;
+        }
+
+        /* UI Overlay Elements (Score, Stop Button) */
+        .game-ui-overlay {
+            position: absolute;
+            top: 20px;
+            left: 0;
+            width: 100%;
+            padding: 0 20px;
+            box-sizing: border-box;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            z-index: 10; /* Ensure it's above the canvas */
+            pointer-events: none; /* Allow clicks to pass through to canvas unless on a button */
+        }
+
+        .game-ui-overlay > * {
+            pointer-events: auto; /* Re-enable pointer events for children like buttons */
+        }
+
+        #score-display-overlay {
+            font-size: clamp(1.2rem, 4vw, 2rem); /* Responsive font size */
+            color: #f1c40f; /* Gold color for score */
+            background-color: rgba(0,0,0,0.3);
+            padding: 5px 10px;
+            border-radius: 5px;
+        }
+
+        button {
+            font-family: 'Press Start 2P', cursive;
+            background-color: #e67e22; /* Orange buttons */
+            color: white;
+            padding: clamp(10px, 3vw, 18px) clamp(15px, 4vw, 25px); /* Responsive padding */
+            border: none;
+            border-radius: 8px;
+            font-size: clamp(0.8rem, 2.5vw, 1.2rem); /* Responsive font size */
+            cursor: pointer;
+            transition: background-color 0.3s, transform 0.1s;
+            margin: 10px 5px;
+            box-shadow: 0 4px #d35400; /* Button shadow for 3D effect */
+            text-shadow: 1px 1px 2px rgba(0,0,0,0.5);
+        }
+        button:hover {
+            background-color: #f39c12; /* Lighter orange on hover */
+        }
+        button:active {
+            transform: translateY(2px);
+            box-shadow: 0 2px #d35400;
+        }
+
+        h1 {
+            font-size: clamp(2rem, 8vw, 4rem);
+            color: #ecf0f1;
+            margin-bottom: 20px;
+        }
+        h2 {
+            font-size: clamp(1.8rem, 7vw, 3.5rem);
+            color: #ecf0f1;
+            margin-bottom: 15px;
+        }
+        p {
+            font-size: clamp(1rem, 3vw, 1.5rem);
+            margin: 15px 0;
+        }
+        #final-score {
+             font-size: clamp(1.2rem, 5vw, 2.5rem);
+        }
+
+    </style>
+</head>
+<body>
+    <div id="intro-screen" class="screen active">
+        <div class="screen-container">
+            <h1>Catch the Mouse!</h1>
+            <p>Tap the mouse to score points!</p>
+            <button id="start-button">Start Game</button>
+        </div>
+    </div>
+
+    <div id="game-screen" class="screen">
+        <div class="game-ui-overlay">
+            <div id="score-display-overlay">Score: 0</div>
+            <button id="stop-button-overlay">Stop</button>
+        </div>
+        <canvas id="game-canvas"></canvas>
+    </div>
+
+    <div id="score-screen" class="screen">
+        <div class="screen-container">
+            <h2>Game Over!</h2>
+            <p id="final-score">Your score: 0</p>
+            <button id="retry-button">Retry</button>
+        </div>
+    </div>
+
+    <script>
+        // --- DOM Elements ---
+        const introScreen = document.getElementById('intro-screen');
+        const gameScreen = document.getElementById('game-screen');
+        const scoreScreen = document.getElementById('score-screen');
+
+        const startButton = document.getElementById('start-button');
+        const stopButtonOverlay = document.getElementById('stop-button-overlay');
+        const retryButton = document.getElementById('retry-button');
+
+        const scoreDisplayOverlay = document.getElementById('score-display-overlay');
+        const finalScoreDisplay = document.getElementById('final-score');
+
+        const canvas = document.getElementById('game-canvas');
+        const ctx = canvas.getContext('2d');
+
+        // --- Game State ---
+        let score = 0;
+        let animationFrameId;
+        let gameRunning = false;
+        const mouseEmoji = '🐁';
+        let mouse = {
+            x: 50,
+            y: 50,
+            size: 110, 
+            dx: 0,
+            dy: 0
+        };
+        const MOUSE_SPEED_MIN = 1.0; 
+        const MOUSE_SPEED_MAX = 2.5; 
+
+        // --- Sound Synthesis & Playback (Tone.js) ---
+        let squeakSynth;
+        let runningSoundPlayer; 
+        const MOUSE_RUNNING_SOUND_PATH = "mouse_running.mp3"; //  Ensure this path is correct for your GitHub repo
+
+        async function initAudio() {
+            if (typeof Tone === 'undefined' || Tone === null) {
+                console.warn('Tone.js not loaded. Game will run without sound.');
+                return false;
+            }
+            // Ensure AudioContext is started by a user gesture.
+            // This is typically done once. The `startGame` function, triggered by a button, will call this.
+            if (Tone.context.state !== 'running') {
+                try {
+                    await Tone.start(); 
+                    console.log('AudioContext started');
+                } catch (e) {
+                    console.error("Error starting AudioContext:", e);
+                    alert("Could not initialize audio. Game will run without sound.");
+                    return false; 
+                }
+            }
+
+            // Initialize squeak sound
+            if (!squeakSynth) {
+                squeakSynth = new Tone.Synth({
+                    oscillator: { type: 'sine' },
+                    envelope: { attack: 0.01, decay: 0.1, sustain: 0.1, release: 0.2 },
+                }).toDestination();
+            }
+
+            // Initialize running sound player if it hasn't been already
+            if (!runningSoundPlayer) {
+                runningSoundPlayer = new Tone.Player({
+                    url: MOUSE_RUNNING_SOUND_PATH,
+                    loop: true,
+                    autostart: false, // We will explicitly start it
+                    onload: () => {
+                        console.log("Mouse running sound loaded successfully.");
+                        // MODIFICATION: If the game is already supposed to be running when the sound loads, start it.
+                        if (gameRunning) {
+                            startRunningSound();
+                        }
+                    },
+                    onerror: (error) => {
+                        console.error("Error loading mouse running sound:", error);
+                        alert(`Could not load the mouse running sound from: ${MOUSE_RUNNING_SOUND_PATH}. Please check the path and file. Running sound will be disabled.`);
+                        runningSoundPlayer = null; 
+                    }
+                }).toDestination();
+            } else if (runningSoundPlayer.loaded && gameRunning) {
+                // If player exists, is loaded, and game is running (e.g. retry), start it.
+                 startRunningSound();
+            }
+            return true; 
+        }
+
+        function playSqueak() {
+            if (squeakSynth && Tone.context.state === 'running') {
+                squeakSynth.triggerAttackRelease('C6', '8n', Tone.now() + Math.random() * 0.1); 
+            }
+        }
+
+        function startRunningSound() {
+            // Check if player exists, is loaded, context is running, and not already started
+            if (runningSoundPlayer && runningSoundPlayer.loaded && Tone.context.state === 'running' && runningSoundPlayer.state !== "started") {
+                runningSoundPlayer.start();
+                console.log("Started running sound.");
+            } else if (runningSoundPlayer && !runningSoundPlayer.loaded) {
+                console.warn("Attempted to start running sound, but it's not loaded yet. It should start on load if game is running.");
+            } else if (!runningSoundPlayer) {
+                 console.warn("Attempted to start running sound, but player is not initialized (possibly due to load error).");
+            }
+        }
+
+        function stopRunningSound() {
+            if (runningSoundPlayer && runningSoundPlayer.loaded && runningSoundPlayer.state === "started") {
+                runningSoundPlayer.stop();
+                console.log("Stopped running sound.");
+            }
+        }
+
+
+        // --- Screen Management ---
+        function showScreen(screenElement) {
+            introScreen.classList.remove('active');
+            gameScreen.classList.remove('active');
+            scoreScreen.classList.remove('active');
+            screenElement.classList.add('active');
+        }
+
+        // --- Mouse Logic ---
+        function spawnMouse() {
+            mouse.x = (mouse.size / 2) + Math.random() * (canvas.width - mouse.size);
+            mouse.y = (mouse.size / 2) + Math.random() * (canvas.height - mouse.size);
+
+            const speedMagnitude = MOUSE_SPEED_MIN + Math.random() * (MOUSE_SPEED_MAX - MOUSE_SPEED_MIN);
+            const angle = Math.random() * Math.PI * 2;
+            mouse.dx = Math.cos(angle) * speedMagnitude;
+            mouse.dy = Math.sin(angle) * speedMagnitude;
+        }
+
+        function drawMouse() {
+            ctx.font = `${mouse.size}px Arial`; 
+            ctx.textAlign = 'center';
+            ctx.textBaseline = 'middle';
+            ctx.fillStyle = 'rgba(0,0,0,0.2)';
+            ctx.fillText(mouseEmoji, mouse.x + mouse.size * 0.05, mouse.y + mouse.size * 0.05);
+            ctx.fillStyle = 'black'; 
+            ctx.fillText(mouseEmoji, mouse.x, mouse.y);
+        }
+
+        function updateMouse() {
+            mouse.x += mouse.dx;
+            mouse.y += mouse.dy;
+
+            const halfSize = mouse.size / 2; 
+            if (mouse.x - halfSize < 0) {
+                mouse.dx *= -1;
+                mouse.x = halfSize; 
+            } else if (mouse.x + halfSize > canvas.width) {
+                mouse.dx *= -1;
+                mouse.x = canvas.width - halfSize; 
+            }
+
+            if (mouse.y - halfSize < 0) {
+                mouse.dy *= -1;
+                mouse.y = halfSize; 
+            } else if (mouse.y + halfSize > canvas.height) {
+                mouse.dy *= -1;
+                mouse.y = canvas.height - halfSize; 
+            }
+        }
+
+        function isMouseTapped(clickX, clickY) {
+            const halfSize = mouse.size / 2;
+            return clickX >= mouse.x - halfSize &&
+                   clickX <= mouse.x + halfSize &&
+                   clickY >= mouse.y - halfSize &&
+                   clickY <= mouse.y + halfSize;
+        }
+
+        // --- Game Loop ---
+        function gameLoop() {
+            if (!gameRunning) return;
+
+            ctx.clearRect(0, 0, canvas.width, canvas.height); 
+            updateMouse();
+            drawMouse();
+            animationFrameId = requestAnimationFrame(gameLoop);
+        }
+
+        // --- Game Control Functions ---
+        async function startGame() {
+            // Ensure audio context is running and sounds are initialized/ready.
+            const audioReady = await initAudio(); 
+
+            score = 0;
+            updateScoreDisplay();
+            // Set gameRunning to true BEFORE trying to start sounds that depend on this flag
+            gameRunning = true; 
+            
+            resizeCanvas(); 
+            spawnMouse();
+            showScreen(gameScreen);
+            
+            if (animationFrameId) cancelAnimationFrame(animationFrameId);
+            gameLoop();
+
+            // MODIFICATION: Call startRunningSound here.
+            // If the sound wasn't loaded yet, the onload callback in initAudio will handle starting it.
+            // If it was already loaded (e.g., on a retry), this will start it.
+            if (audioReady) {
+                startRunningSound();
+            }
+        }
+
+        function stopGame() {
+            gameRunning = false; // Set to false before stopping sounds
+            if (animationFrameId) {
+                cancelAnimationFrame(animationFrameId);
+            }
+            stopRunningSound(); 
+            finalScoreDisplay.textContent = `Your score: ${score}`;
+            showScreen(scoreScreen);
+        }
+
+        function updateScoreDisplay() {
+            scoreDisplayOverlay.textContent = `Score: ${score}`;
+        }
+
+        // --- Event Handlers ---
+        // Make event handlers async to correctly await startGame
+        startButton.addEventListener('click', async () => { 
+            await startGame(); 
+        });
+        stopButtonOverlay.addEventListener('click', stopGame);
+        retryButton.addEventListener('click', async () => { 
+            await startGame();
+        });
+
+
+        canvas.addEventListener('click', (event) => {
+            if (!gameRunning) return;
+
+            const rect = canvas.getBoundingClientRect();
+            const clickX = (event.clientX - rect.left) * (canvas.width / rect.width);
+            const clickY = (event.clientY - rect.top) * (canvas.height / rect.height);
+
+            if (isMouseTapped(clickX, clickY)) {
+                score++;
+                updateScoreDisplay();
+                playSqueak(); 
+                spawnMouse(); 
+            }
+        });
+
+        // --- Canvas Resizing ---
+        function resizeCanvas() {
+            canvas.width = window.innerWidth;
+            canvas.height = window.innerHeight;
+
+            if (gameRunning && mouse) {
+                 mouse.x = Math.max(mouse.size / 2, Math.min(mouse.x, canvas.width - mouse.size / 2));
+                 mouse.y = Math.max(mouse.size / 2, Math.min(mouse.y, canvas.height - mouse.size / 2));
+            }
+        }
+
+        // --- Initial Setup ---
+        window.addEventListener('resize', () => {
+            if (gameScreen.classList.contains('active')) {
+                resizeCanvas();
+            }
+        });
+        
+        showScreen(introScreen); 
+
+    </script>
+</body>
+</html>
