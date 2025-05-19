@@ -194,11 +194,19 @@
         // --- Sound Synthesis & Playback (Tone.js) ---
         let squeakSynth;
         let runningSoundPlayer; 
-        const MOUSE_RUNNING_SOUND_PATH = "mouse_running.mp3"; //  Ensure this path is correct for your GitHub repo
-        let audioInitialized = false; // Flag to track if initAudio has been successfully called
+        const MOUSE_RUNNING_SOUND_PATH = "mouse_running.mp3"; 
+        let audioInitialized = false; 
 
         async function initAudio() {
-            if (audioInitialized) return true; // Don't re-initialize if already done
+            if (audioInitialized) {
+                // If already initialized and player exists, ensure it starts if game is running and player is loaded
+                // This handles "Retry" scenarios better.
+                if (gameRunning && runningSoundPlayer && runningSoundPlayer.loaded && runningSoundPlayer.state !== "started") {
+                    console.log("Audio previously initialized. Starting loaded running sound on retry.");
+                    startRunningSound();
+                }
+                return true;
+            }
 
             if (typeof Tone === 'undefined' || Tone === null) {
                 console.warn('Tone.js not loaded. Game will run without sound.');
@@ -216,7 +224,6 @@
                 }
             }
 
-            // Initialize squeak sound
             if (!squeakSynth) {
                 squeakSynth = new Tone.Synth({
                     oscillator: { type: 'sine' },
@@ -224,7 +231,6 @@
                 }).toDestination();
             }
 
-            // Initialize running sound player
             if (!runningSoundPlayer) {
                 runningSoundPlayer = new Tone.Player({
                     url: MOUSE_RUNNING_SOUND_PATH,
@@ -232,7 +238,12 @@
                     autostart: false, 
                     onload: () => {
                         console.log("Mouse running sound loaded successfully.");
-                        // Sound will be started by startGame explicitly
+                        // ** CRITICAL FIX **
+                        // If the game has already been started by the time the sound loads, play it.
+                        if (gameRunning && runningSoundPlayer.loaded && runningSoundPlayer.state !== "started") {
+                             console.log("MP3 loaded and game is running, attempting to start from onload.");
+                             startRunningSound(); // Call the correctly scoped start function
+                        }
                     },
                     onerror: (error) => {
                         console.error("Error loading mouse running sound:", error);
@@ -241,7 +252,7 @@
                     }
                 }).toDestination();
             }
-            audioInitialized = true; // Set flag to true after successful initialization
+            audioInitialized = true; 
             return true; 
         }
 
@@ -254,11 +265,15 @@
         function startRunningSound() {
             if (runningSoundPlayer && runningSoundPlayer.loaded && Tone.context.state === 'running' && runningSoundPlayer.state !== "started") {
                 runningSoundPlayer.start();
-                console.log("Started mouse running sound.");
+                console.log("Function startRunningSound: Started mouse running sound.");
             } else if (runningSoundPlayer && !runningSoundPlayer.loaded) {
-                console.warn("Mouse running sound not loaded yet. It should start via onload if game starts before load finishes.");
+                console.warn("Function startRunningSound: Mouse running sound not loaded yet. Onload callback should handle it.");
             } else if (!runningSoundPlayer) {
-                 console.warn("Mouse running sound player not initialized (possibly due to load error).");
+                 console.warn("Function startRunningSound: Mouse running sound player not initialized.");
+            } else if (runningSoundPlayer && runningSoundPlayer.state === "started") {
+                console.log("Function startRunningSound: Sound already started.");
+            } else if (Tone.context.state !== 'running') {
+                console.warn("Function startRunningSound: AudioContext not running.");
             }
         }
 
@@ -340,8 +355,6 @@
 
         // --- Game Control Functions ---
         async function startGame() {
-            // Initialize audio context on the first user gesture (start button click)
-            // and set up sound players.
             const audioIsReady = await initAudio(); 
 
             score = 0;
@@ -356,18 +369,9 @@
             gameLoop();
 
             if (audioIsReady) {
-                // If the sound is already loaded, startRunningSound will play it.
-                // If it's not loaded yet, the onload callback in initAudio will handle starting it
-                // once it loads, because gameRunning is now true.
-                // To ensure it plays if loaded, we also check in onload of the player.
-                // For simplicity now, we rely on player being loaded or onload to trigger.
-                if (runningSoundPlayer && runningSoundPlayer.loaded) {
-                    startRunningSound();
-                } else if (runningSoundPlayer) {
-                    // If not loaded, the onload callback in initAudio will check gameRunning
-                    // and start it. We add a log here for clarity.
-                    console.log("Mouse running sound is loading... will play once ready if game is still running.");
-                }
+                // Attempt to start the sound. If it's not loaded yet, 
+                // the onload callback in initAudio will handle starting it.
+                startRunningSound();
             }
         }
 
@@ -391,8 +395,6 @@
         });
         stopButtonOverlay.addEventListener('click', stopGame);
         retryButton.addEventListener('click', async () => { 
-            // Reset audioInitialized flag if you want to re-initialize (optional, depends on desired behavior)
-            // For now, initAudio handles not re-initializing if already done.
             await startGame();
         });
 
